@@ -1,0 +1,268 @@
+name: prompt-manager
+description: |
+  Sistema de gestión de prompts para código, imágenes y video.
+  Palabra clave "Pumas" activa modo conversación directa.
+  Sin "Pumas", el sistema interpreta el mensaje como operación de prompt.
+
+triggers:
+  # Modo conversación directa (con palabra clave Pumas)
+  - pattern: "^(?i)pumas\\s+"
+    action: conversation_mode
+    description: "Modo conversación directa - no procesar como prompt"
+
+  # Optimizar prompt antes de guardar (delega a prompt-optimizer)
+  - pattern: "(?i)^/prompt\\s+(optimizar|optimiza|mejora|mejorar)\\b"
+    action: optimize_prompt
+    description: "Optimizar prompt antes de guardar - usa skill prompt-optimizer"
+
+  # Guardar nuevo prompt (detectado por contexto)
+  - pattern: "(?i)(guarda|guardar|nuevo prompt|save|add).*?(prompt|generar|crear)"
+    action: save_prompt
+    description: "Guardar un nuevo prompt"
+
+  # Buscar prompts
+  - pattern: "(?i)(busca|buscar|find|search|muestra|lista).*?(prompt|prompts)"
+    action: search_prompts
+    description: "Buscar prompts existentes"
+
+  # Actualizar prompt
+  - pattern: "(?i)(actualiza|actualizar|update|modifica|modificar).*?(prompt)"
+    action: update_prompt
+    description: "Actualizar prompt existente"
+
+  # Default: si el mensaje parece un prompt (largo, descriptivo)
+  - pattern: "^(?!.*\\b(hola|hey|como|que|qué|buenos|ayuda|help)\\b).{50,}$"
+    action: auto_classify_and_save
+    description: "Auto-clasificar y guardar como prompt"
+
+actions:
+  conversation_mode:
+    steps:
+      - type: respond
+        message: "Modo conversación activado. ¿En qué puedo ayudarte?"
+
+  optimize_prompt:
+    description: |
+      Delega a la skill prompt-optimizer para analizar y proponer mejoras
+      en el prompt antes de guardarlo.
+    steps:
+      - type: delegate_to_skill
+        skill: prompt-optimizer
+        message: |
+          El usuario quiere optimizar este prompt antes de guardarlo:
+
+          {user_input}
+
+          Por favor analiza el prompt y genera las 3 propuestas de optimización
+          (fotorrealismo, dirección creativa, consistencia técnica) con su
+          metadata YAML completa.
+
+  save_prompt:
+    steps:
+      - type: classify_content
+        extract:
+          - type: "categoría principal (code|image|video)"
+          - subtype: "subcategoría específica"
+          - tags: "array de etiquetas relevantes"
+          - camera_angle: "ángulo de cámara si aplica"
+          - pose_type: "tipo de pose si aplica"
+          - orientation: "orientación corporal (frontal, perfil, espalda)"
+          - shot_type: "tipo de toma (selfie, espejo, wide, closeup)"
+
+      - type: generate_filename
+        template: "{timestamp}_{type}_{subtype}.{ext}"
+
+      - type: create_file
+        path: "{category}/"
+        content_template: |
+          ---
+          id: {uuid}
+          type: {type}
+          subtype: {subtype}
+          tags: {tags}
+          camera:
+            angle: {camera_angle}
+            shot_type: {shot_type}
+          subject:
+            pose: {pose_type}
+            orientation: {orientation}
+            framing: {framing}
+          created: {timestamp}
+          usage_count: 0
+          ---
+
+          # {title}
+
+          {content}
+
+          ## Notas de uso
+
+          {notes}
+
+      - type: update_index
+        index_file: "index.md"
+
+      - type: respond
+        message: |
+          ✅ Prompt guardado exitosamente
+
+          **Ubicación:** `{filepath}`
+          **Tipo:** {type}/{subtype}
+          **Tags:** {tags}
+
+          El prompt ha sido indexado y está listo para búsquedas.
+
+  auto_classify_and_save:
+    classification_rules:
+      video:
+        patterns:
+          - "(?i)(video|movimiento|animación|camera|selfie|espejo|pose)"
+          - "(?i)(ángulo|angle|plano|toma|shot)"
+          - "(?i)(de espaldas|de perfil|de frente|lateral)"
+          - "(?i)(cámara|camera|lente|lens)"
+        subtypes:
+          selfies:
+            patterns: ["(?i)selfie", "(?i)autofoto", "(?i)cámara frontal"]
+          mirror:
+            patterns: ["(?i)espejo", "(?i)mirror", "(?i)reflejo"]
+          poses:
+            patterns: ["(?i)pose", "(?i)postura", "(?i)posición", "(?i)quieto"]
+          movements:
+            patterns: ["(?i)movimiento", "(?i)motion", "(?i)dinámico", "(?i)salto", "(?i)corre"]
+          camera-angles:
+            patterns: ["(?i)ángulo", "(?i)plano", "(?i)encuadre", "(?i)angle", "(?i)low angle", "(?i)high angle"]
+
+      image:
+        patterns:
+          - "(?i)(imagen|image|foto|photo|genera una imagen)"
+        subtypes:
+          photorealistic:
+            patterns: ["(?i)fotorrealista", "(?i)photorealistic", "(?i)realista"]
+          artistic:
+            patterns: ["(?i)arte", "(?i)artistic", "(?i)pintura", "(?i)ilustración"]
+          characters:
+            patterns: ["(?i)personaje", "(?i)character", "(?i)rostro", "(?i)retrato"]
+
+      code:
+        patterns:
+          - "(?i)(código|code|función|function|script|programa)"
+          - "(?i)(python|javascript|js|sql|html|css|react)"
+        subtypes:
+          python:
+            patterns: ["(?i)python", "(?i)\.py", "(?i)def ", "(?i)import "]
+          javascript:
+            patterns: ["(?i)javascript", "(?i)js", "(?i)node", "(?i)react"]
+          sql:
+            patterns: ["(?i)sql", "(?i)query", "(?i)select", "(?i)database"]
+
+    extract_metadata:
+      camera_angles:
+        - pattern: "(?i)(low angle|desde abajo|contrapicado)"
+          value: "low_angle"
+        - pattern: "(?i)(high angle|desde arriba|picado)"
+          value: "high_angle"
+        - pattern: "(?i)(eye level|nivel de ojos|plano medio)"
+          value: "eye_level"
+        - pattern: "(?i)(dutch angle|ángulo holandés|inclinado)"
+          value: "dutch_angle"
+        - pattern: "(?i)(bird.eye|vista de pájaro|plano cenital)"
+          value: "bird_eye"
+        - pattern: "(?i)(worm.eye|contra picado extremo)"
+          value: "worm_eye"
+
+      orientations:
+        - pattern: "(?i)(de frente|frontal|facing camera|looking at camera)"
+          value: "frontal"
+        - pattern: "(?i)(de perfil|lateral|side view|profile)"
+          value: "perfil"
+        - pattern: "(?i)(de espaldas|espalda|back view|from behind)"
+          value: "espaldas"
+        - pattern: "(?i)(3/4|tres cuartos|three quarter)"
+          value: "tres_cuartos"
+
+      shot_types:
+        - pattern: "(?i)(selfie|autofoto|front camera)"
+          value: "selfie"
+        - pattern: "(?i)(espejo|mirror|reflejo)"
+          value: "mirror"
+        - pattern: "(?i)(wide shot|plano amplio|wide angle)"
+          value: "wide"
+        - pattern: "(?i)(close up|primer plano|closeup)"
+          value: "closeup"
+        - pattern: "(?i)(medium shot|plano medio)"
+          value: "medium"
+        - pattern: "(?i)(full body|cuerpo completo|entero)"
+          value: "full_body"
+
+      poses:
+        - pattern: "(?i)(sentado|sitting|sentada)"
+          value: "sentado"
+        - pattern: "(?i)(parado|de pie|standing)"
+          value: "parado"
+        - pattern: "(?i)(agachado|cuclillas|crouching|squat)"
+          value: "agachado"
+        - pattern: "(?i)(acostado|tumbado|lying|recostado)"
+          value: "acostado"
+        - pattern: "(?i)(caminando|walking|andando)"
+          value: "caminando"
+        - pattern: "(?i)(saltando|jumping|en el aire)"
+          value: "saltando"
+
+  search_prompts:
+    steps:
+      - type: parse_query
+        extract_filters:
+          - type
+          - subtype
+          - tags
+          - camera_angle
+          - orientation
+          - pose
+          - shot_type
+
+      - type: search_index
+        index_file: "index.md"
+
+      - type: respond
+        message: |
+          Resultados de búsqueda para: "{query}"
+
+          {results}
+
+index_structure:
+  file: "index.md"
+  format: |
+    # Índice de Prompts
+
+    ## Estadísticas
+    - Total prompts: {count}
+    - Última actualización: {timestamp}
+
+    ## Por Categoría
+
+    ### Video
+    {video_prompts}
+
+    #### Por Tipo de Toma
+    {by_shot_type}
+
+    #### Por Ángulo de Cámara
+    {by_camera_angle}
+
+    #### Por Orientación
+    {by_orientation}
+
+    #### Por Pose
+    {by_pose}
+
+    ### Image
+    {image_prompts}
+
+    ### Code
+    {code_prompts}
+
+    ## Tags Populares
+    {popular_tags}
+
+    ## Búsqueda Rápida
+    Buscar por: `type:video orientation:espaldas` o `tags:selfie,dinamico`
